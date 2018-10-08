@@ -10,7 +10,6 @@ from boa.interop.System.Blockchain import GetHeight, GetHeader, GetBlock
 from boa.interop.System.Header import GetHash
 from boa.builtins import *
 
-
 owner = ToScriptHash('XXXXXXXXXXXXXXXXXX')
 
 NAME = 'Fighting Panda'
@@ -26,6 +25,7 @@ ASSET_ID_PREFIX = 'AssetID'
 ONT_BALANCE_PREFIX = 'OntBalance'
 BAMBOO_BALANCE = 'BambooBalance'
 LAST_FEED_TIME = 'LastFeedTime'
+LAST_ADVENTURE_TIME = 'LastADTime'
 USER_ASSET_PREFIX = 'UserAsset'
 
 QUANLITY_GOLD = 'GOLD'
@@ -41,8 +41,10 @@ ATTRIBUTE_LEVEL = 'Lv'
 ATTRIBUTE_EXP = 'Exp'
 ATTRIBUTE_ATK = 'Atk'
 ATTRIBUTE_HP = 'HP'
+ATTRIBUTE_HPMAX = 'HPMAX'
 ATTRIBUTE_Qty = 'Qty'
 ATTRIBUTE_Img = 'Image'
+ATTRIBUTE_EXPCAP = 'ExpCap'
 
 
 ctx = GetContext()
@@ -135,6 +137,12 @@ def Main(operation, args):
             return False
         assetID = args[0]
         return feedPanda(assetID)
+    if operation == 'adventure':
+        if len(args) != 2:
+            return False
+        assetID = args[0]
+        lv = args[1]
+        return adventure(assetID, lv)
 
     if operation == 'withdraw':
         if len(args) != 1:
@@ -408,10 +416,12 @@ def createPanda(assetID, seed):
     panda = {'ID': assetID,
              'Name': concatkey('PANDA', names[idx]),
              'Type': 'PANDA',
-             'Lv': 0,
+             'Lv': 1,
              'Exp': 0,
+             'ExpCap': 60,
              'Atk': 1,
              'HP': 10,
+             'HPMAX': 10,
              'Qty': quanlity,
              'Image': concat(quanlity, '.png')}
     return panda
@@ -552,60 +562,94 @@ def getBambooBalance(account):
 
 
 def feedPanda(assetID):
+    '''
+    feedPanda only recovery the HP loss
+    :param assetID:
+    :return:
+    '''
     owner = ownerOf(assetID)
     if not owner:
         return False
     if CheckWitness(owner) == False:
         return False
-    bamboo = Get(ctx, concatkey(BAMBOO_BALANCE, owner))
-    if bamboo < 1:
-        return False
-    lastFeedTime = Get(ctx, concatkey(LAST_FEED_TIME, assetID))
-    currentTime = GetTime()
-    period = currentTime - lastFeedTime
+
     pdata = Get(ctx, concatkey(ASSET_ID_PREFIX, assetID))
     panda = Deserialize(pdata)
-    qty = panda[ATTRIBUTE_Qty]
-    canfeed = False
-    if qty == QUANLITY_GOLD:
-        if period > 5 * 60:
-            canfeed = True
-    elif qty == QUANLITY_SILVER:
-        if period > 10 * 60:
-            canfeed = True
-    elif qty == QUANLITY_COPPER:
-        if period > 30 * 60:
-            canfeed = True
-    elif qty == QUANLITY_IRON:
-        if period > 60 * 60:
-            canfeed = True
-    elif qty == QUANLITY_WOOD:
-        if period > 90 * 60:
-            canfeed = True
-
-    # only for test
-    # canfeed = True
-
-    if canfeed == False:
-        return False
-    #feed bamboo
-    Put(ctx, concatkey(BAMBOO_BALANCE, owner), bamboo - 1)
-    currentExp = panda[ATTRIBUTE_EXP]
-    currentLv = panda[ATTRIBUTE_LEVEL]
-    increaseExp = 10 + abs(getRandom()) % 5
-
-    lvcap = getExpCap(currentLv)
-
-    if currentExp + increaseExp >= lvcap:
-        panda = levelUp(panda, currentExp + increaseExp - lvcap)
+    if panda[ATTRIBUTE_HP] == panda[ATTRIBUTE_HPMAX]:
+        return True
     else:
-        panda[ATTRIBUTE_EXP] = currentExp + increaseExp
+        bamboo = Get(ctx, concatkey(BAMBOO_BALANCE, owner))
+        if bamboo < 1:
+            return False
+        increaseHP = 10 + abs(getRandom()) % 3
+        if panda[ATTRIBUTE_HP] + increaseHP >= panda[ATTRIBUTE_HPMAX]:
+            panda[ATTRIBUTE_HP] = panda[ATTRIBUTE_HPMAX]
+        else:
+            panda[ATTRIBUTE_HP] = panda[ATTRIBUTE_HP] + increaseHP
+        Put(ctx, concatkey(ASSET_ID_PREFIX, assetID), Serialize(panda))
+    return True
 
+
+def adventure(assetID, lv):
+    owner = ownerOf(assetID)
+    if not owner:
+        return False
+    if CheckWitness(owner) == False:
+        return False
+
+    lastADTime = Get(ctx, concatkey(LAST_ADVENTURE_TIME, assetID))
+    currentTime = GetTime()
+    period = currentTime - lastADTime
+
+    pdata = Get(ctx, concatkey(ASSET_ID_PREFIX, assetID))
+    panda = Deserialize(pdata)
+    if panda[ATTRIBUTE_HP] == 0:
+        return False
+    pandaLV = panda[ATTRIBUTE_LEVEL]
+    qty = panda[ATTRIBUTE_Qty]
+    # canAD = False
+    # if qty == QUANLITY_GOLD:
+    #     if period > 5 * 60:
+    #         canAD = True
+    # elif qty == QUANLITY_SILVER:
+    #     if period > 10 * 60:
+    #         canAD = True
+    # elif qty == QUANLITY_COPPER:
+    #     if period > 30 * 60:
+    #         canAD = True
+    # elif qty == QUANLITY_IRON:
+    #     if period > 60 * 60:
+    #         canAD = True
+    # elif qty == QUANLITY_WOOD:
+    #     if period > 90 * 60:
+    #         canAD = True
+    #
+    # if canAD == False:
+    #     return False
+
+    tmpRandom = (abs(getRandom()) >> (lv % 5 + 1)) % (panda[ATTRIBUTE_HPMAX] + lv + pandaLV)
+    magicno = abs(sha1(getRandom() >> (lv % 8 + 1))) % (pandaLV + lv)
+
+    resist = (panda[ATTRIBUTE_ATK] * 35 + panda[ATTRIBUTE_HPMAX] / 10 * 50 + magicno * 20) / (panda[ATTRIBUTE_ATK] + panda[ATTRIBUTE_HPMAX] / 10 + pandaLV - lv)
+    injuredHP = (tmpRandom * 100 - resist) / 100
+
+    passed = False
+    if injuredHP >= panda[ATTRIBUTE_HP]:
+        panda[ATTRIBUTE_HP] = 0
+    else:
+        passed = True
+        panda[ATTRIBUTE_HP] = panda[ATTRIBUTE_HP] - injuredHP
+        gotExp = abs(sha1(getRandom() >> (lv % 8 + 1))) % 10
+        newExp = panda[ATTRIBUTE_EXP] + gotExp
+        if newExp >= panda[ATTRIBUTE_EXPCAP]:
+            panda = levelUp(panda, panda[ATTRIBUTE_EXP] + gotExp - panda[ATTRIBUTE_EXPCAP])
+        else:
+            panda[ATTRIBUTE_EXP] = newExp
     Put(ctx, concatkey(ASSET_ID_PREFIX, assetID), Serialize(panda))
 
 
 def getExpCap(lv):
-    return lv * 100
+    return lv * (lv + 5) * 10
 
 
 def levelUp(panda, exceedExp):
@@ -618,31 +662,33 @@ def levelUp(panda, exceedExp):
         atk = panda[ATTRIBUTE_ATK]
         panda[ATTRIBUTE_ATK] = atk + rand % 6 + 6
         rand = rand >> 2
-        hp = panda[ATTRIBUTE_HP]
-        panda[ATTRIBUTE_HP] = hp + rand % 10 + 10
+        hp = panda[ATTRIBUTE_HPMAX]
+        panda[ATTRIBUTE_HPMAX] = hp + rand % 10 + 10
     if qty == QUANLITY_SILVER:
         atk = panda[ATTRIBUTE_ATK]
         panda[ATTRIBUTE_ATK] = atk + rand % 5 + 5
         rand = rand >> 4
-        hp = panda[ATTRIBUTE_HP]
-        panda[ATTRIBUTE_HP] = hp + rand % 8 + 8
+        hp = panda[ATTRIBUTE_HPMAX]
+        panda[ATTRIBUTE_HPMAX] = hp + rand % 8 + 8
     if qty == QUANLITY_COPPER:
         atk = panda[ATTRIBUTE_ATK]
         panda[ATTRIBUTE_ATK] = atk + rand % 4 + 4
         rand = rand >> 6
-        hp = panda[ATTRIBUTE_HP]
-        panda[ATTRIBUTE_HP] = hp + rand % 6 + 6
+        hp = panda[ATTRIBUTE_HPMAX]
+        panda[ATTRIBUTE_HPMAX] = hp + rand % 6 + 6
     if qty == QUANLITY_IRON:
         atk = panda[ATTRIBUTE_ATK]
         panda[ATTRIBUTE_ATK] = atk + rand % 3 + 3
         rand = rand >> 8
-        hp = panda[ATTRIBUTE_HP]
-        panda[ATTRIBUTE_HP] = hp + rand % 5 + 5
+        hp = panda[ATTRIBUTE_HPMAX]
+        panda[ATTRIBUTE_HPMAX] = hp + rand % 5 + 5
     if qty == QUANLITY_WOOD:
         atk = panda[ATTRIBUTE_ATK]
         panda[ATTRIBUTE_ATK] = atk + rand % 2 + 1
         rand = rand >> 10
-        hp = panda[ATTRIBUTE_HP]
-        panda[ATTRIBUTE_HP] = hp + rand % 4 + 4
+        hp = panda[ATTRIBUTE_HPMAX]
+        panda[ATTRIBUTE_HPMAX] = hp + rand % 4 + 4
+    panda[ATTRIBUTE_HP] = panda[ATTRIBUTE_HPMAX]
+    panda[ATTRIBUTE_EXPCAP] = getExpCap(currentLv + 1)
     return panda
 
